@@ -3,7 +3,7 @@
 This guide describes how to install Gentoo Linux on a Nanopi R4S board.
 
 I will put the emphasis on creating a simple system, which will run with the OpenRC init system and boots with no initrd.
-Later on, I will a sections on how to optimize the system to minimize writes and configure this nice device into a useful router.
+Later on, I will add a few sections on how to optimize the system to minimize writes, explain better how the boot process executes and how to configure this nice device into a useful router.
 
 ## Prerequisites
 
