@@ -561,3 +561,16 @@ And power the device on.
 
 Open the [Gentoo Linux AMD64](https://wiki.gentoo.org/wiki/Handbook:AMD64) handbook and follow the steps that may have been skipped up to now.
 
+## References
+
+- [How to compile ATF](http://opensource.rock-chips.com/wiki_ATF)
+- [How to build U-Boot on rockchip boards](https://gitlab.denx.de/u-boot/u-boot/-/blob/master/doc/board/rockchip/rockchip.rst)
+- [NanoPi R4S Wiki](https://wiki.friendlyarm.com/wiki/index.php/NanoPi_R4S)
+- [Gentoo AMD64 Handbook](https://wiki.gentoo.org/wiki/Handbook:AMD64)
+- [Gentoo Embedded Handbook](https://wiki.gentoo.org/wiki/Embedded_Handbook)
+- [Gentoo Cross build environment wiki page](https://wiki.gentoo.org/wiki/Cross_build_environment)
+- [FriendlyArm U-Boot fork](https://github.com/friendlyarm/uboot-rockchip/tree/nanopi4-v2020.10)
+- [FriendlyArm Linux kernel fork](https://github.com/friendlyarm/kernel-rockchip/tree/nanopi-r2-v5.10.y)
+- [Archlinux F2FS Wiki page](https://wiki.archlinux.org/index.php/F2FShttps://wiki.archlinux.org/index.php/F2FS)
+- [Linux kernel boot parameters](https://www.kernel.org/doc/html/v5.10/admin-guide/kernel-parameters.html)
+
