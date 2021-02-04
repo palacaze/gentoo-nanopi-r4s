@@ -1,8 +1,8 @@
-# Gentoo on nanopi r4s
+# Gentoo on a NanoPi R4S
 
-This guide describes how to install Gentoo Linux on a Nanopi R4S board.
+This guide describes how to install Gentoo Linux on a NanoPi R4S board.
 
-I will put the emphasis on creating a simple system, which will run with the OpenRC init system and boots with no initrd.
+I will put the emphasis on creating a simple system, using the OpenRC init system and no initrd in its boot process.
 Later on, I will add a few sections on how to optimize the system to minimize writes, explain better how the boot process executes and how to configure this nice device into a useful router.
 
 ## Prerequisites
@@ -112,13 +112,13 @@ F2FS support must also be enabled on the host kernel, especially compression sup
 
 ## Preparing the SD card
 
-We will implement a simple partition scheme to the SD card.
+We will implement a simple partition scheme on the SD card.
 
 The ternary and secondary bootloaders are expected to start at sector 64 (assuming 512B sectors). Meaning that the first 32 kiB are reserved for the GPT partition table.
 
 The secondary boot loader is configured to expect U-Boot to be available at sector 16384, which is 8 MiB.
 
-U-Boot does not support the F2FS filesystem, which I would like to use for the root fs. However it does support ext4, so I will create a partition for boot.
+U-Boot does not support the F2FS filesystem, which I would like to use for the root fs. However it does support ext4, so I will create a separate partition for /boot.
 
 |      Start      |       End       |       Size      |         Content         | Filesystem |
 |-----------------|-----------------|-----------------|-------------------------|------------|
@@ -131,7 +131,7 @@ U-Boot does not support the F2FS filesystem, which I would like to use for the r
 
 ### Partitioning
 
-We will first be zeroing the first 16 MiB to start from a blank state. Zeroing the full SD Card would be ideal.
+We will first be zeroing the first 16 MiB to start from a blank state. Zeroing the full SD Card would be ideal if the card is not new. If you encounter errors while formatting the partitions, try again after zeroing the full card.
 
 ```sh
 dd if=/dev/zero bs=1M count=16 of=${R4S_DEV} && sync
@@ -157,7 +157,8 @@ parted ${R4S_DEV}
 ### Formatting
 
 U-Boot expects ext4 on the boot partition. It is also often a safe bet for the home partition.
-Gentoo Linux, stores all the development headers, the linux kernel sources and the portage tree on the rootfs. This filesystem can thus benefit from compression. F2FS it a good choice on SD cards for this use case.
+Gentoo Linux, stores all the development headers, the Linux kernel sources and the portage tree on the rootfs.
+This filesystem can thus benefit from compression. F2FS st a good choice on SD cards for this use case. Let us also fine tune the filesystems to minimize writes.
 
 ```sh
 R4S_BOOT="${R4S_DEV}1"
@@ -174,7 +175,7 @@ tune2fs -o journal_data_writeback ${R4S_HOME}
 ```
 ## Installing the stage 3
 
-We will prepare the root FS to be installed on the SD Card. Only the bare minimum will be performed in the chroot to setup the system.
+We will now prepare the root FS to be installed on the SD Card. Only the bare minimum will be performed in the chroot to setup the system.
 The remainder will be done once the system is up and running on the real hardware.
 
 ### Mounting the SD card rootfs partition
@@ -188,7 +189,7 @@ mount -o defaults,nobarrier,noatime,nodiratime,compress_algorithm=zstd,compress_
 ### Copying a Stage 3
 
 The Gentoo Linux project provides stage 3 archives for the arm64 architecture.
-Fetch the latest stage 3 archive for arm64 on the [Gentoo downloads](https://www.gentoo.org/downloads) page.
+Get a link to the latest stage 3 archive for arm64 on the [Gentoo downloads](https://www.gentoo.org/downloads) page.
 
 ```sh
 # Fetch the files
@@ -209,7 +210,7 @@ cat "${STAGE3_ARCHIVE}.DIGESTS"
 sha512sum "${STAGE3_ARCHIVE}"
 ```
 
-Unpack as root user and copy the static executable qemu-aarch64 for the chroot to work.
+Unpack as root user to preserve ownership rights and file attributes.
 
 ```sh
 # Unpack the archive in the rootfs
@@ -233,7 +234,7 @@ cp /usr/bin/qemu-aarch64 "${R4S_GENTOO}/usr/bin"
 
 ## Linux kernel
 
-The kernel can be either cross-compiled or compiled from inside the emulated chroot. Cross compilation is faster, this is what I will use.
+The kernel can either be cross-compiled or compiled from inside the emulated chroot. Cross compilation is faster, this is what I will use.
 
 FriendlyArm provides a [fork](https://github.com/friendlyarm/kernel-rockchip/tree/nanopi-r2-v5.10.y) of the Linux kernel which has been rebased on top of v5.10.2 vanilla at the time of writing.
 The 5.10 release being LTS, it makes sense to cherry pick all the commits specific to the FriendlyArm fork and apply them on top of whatever patch release of the mainline kernel is currently available for this LTS version.
@@ -254,7 +255,8 @@ git diff ${tag_5_10_2}..HEAD > "${R4S_KPATCH_5_10}/nanopi-r4s.patch"
 
 ### Fetching the 5.10 LTS kernel
 
-We will fetch the mainline 5.10 branch and apply the Nanopi specific patches on top of it
+We will fetch the mainline 5.10 branch and apply the Nanopi specific patches on top of it.
+Alternatively, the official `sys-kernel/gentoo-sources` could also be used from inside the chrooted rootfs.
 
 ```sh
 git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git --depth 1 -b linux-5.10.y "${R4S_KERNEL}"
@@ -351,7 +353,7 @@ make ARCH=arm CROSS_COMPILE=aarch64-unknown-linux-gnu-
 ```
 ### Installation on the SD card
 
-Assuming the SD card to be exposed as `/dev/sdX`, the bootloader can be flashed onto the SD card in two steps:
+Assuming the SD card to be exposed as `${R4S_DEV}`, the bootloader can be flashed onto the SD card in two steps:
 
 ```sh
 # Write the tpl and spl at sector 64, then U-Boot proper at 16384 sector
@@ -415,7 +417,7 @@ USE="arm bash-completion idn ipv6 zlib -doc -test -X -bindist -gnome -gtk -gtk3 
 
 ### Hostname
 
-set it in /etc/conf.d/hostname
+Set it in /etc/conf.d/hostname
 
 ### Installing useful tools
 
@@ -444,7 +446,9 @@ rc-update add cronie default
 
 ### Configuring the network
 
-There are 2 network interfaces. The first one is available as eth0, the other enp1s0.
+There are 2 network interfaces.
+The WAN interface is available as `eth0`, whereas the LAN one appears as `enp1s0`.
+OpenRC will attempt DHCP requests on enabled but not configured interfaces.
 
 ```sh
 emerge -a dhcpcd
@@ -455,7 +459,9 @@ ln -s net.lo net.eth0
 rc-update add net.eth0 default
 
 ln -s net.lo net.enp1s0
-rc-update add net.enp1s0 default
+
+# If you have a DHCP server on the LAN interface, enable this one
+# rc-update add net.enp1s0 default
 ```
 
 Let's also enable the SSH server on boot
@@ -471,6 +477,8 @@ In `/etc/inittab`, add the following line:
 ```
 s0:12345:respawn:/sbin/agetty 1500000 ttyS2 vt100
 ```
+
+You may also comment out the `f0:` line in the inittab, it spins unsuccessfully.
 
 ### Adding a user
 
@@ -539,15 +547,23 @@ fdt addr ${fdt_addr_r}
 booti ${kernel_addr_r} - ${fdt_addr_r}
 ```
 
-We now generate the corresponding `boot.scr` file using `mkimage`.
+We can now generate the corresponding `boot.scr` file using `mkimage`.
 
 ```sh
 mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
 ```
 
+Note how I used `Image` for the kernel image instead of the more specific `Image_5.10.12` filename that was install into the /boot directory.
+This is easier to edit a symbolic link rather than editing the boot script and regenerate the binary representation.
+
+```sh
+cd /boot
+ln -sf Image_5.10.12 Image
+```
+
 ### Cleanup and boot the system
 
-Everything should now be ready. All the partition can now be unmounted, the SD card inserted into device slot and a serial cable plugged into the debug uart headers if you have one.
+Everything should now be ready. All the partitions can be unmounted, the SD card inserted into the device card slot and a serial cable plugged into the debug UART headers if you have one. Remember to cross the Rx and Tx cables on the UART adapter.
 
 Connect to the console using screen (as root or add yourself to the uucp group):
 
