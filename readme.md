@@ -260,7 +260,11 @@ We will fetch the mainline 5.10 branch and apply the Nanopi specific patches on 
 git clone https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git --depth 1 -b linux-5.10.y "${R4S_KERNEL}"
 cd "${R4S_KERNEL}"
 git apply "${R4S_KPATCH_5_10}/nanopi-r4s.patch"
+```
 
+### Configuring the kernel
+
+```sh
 # An alias to simplify make invocation
 export kmake=make ARCH=arm64 CROSS_COMPILE=aarch64-unknown-linux-gnu- INSTALL_MOD_PATH="${R4S_GENTOO}"
 
@@ -271,7 +275,30 @@ ${kmake} nanopi4_linux_defconfig
 
 # If you specifically need additional modules, add them now
 ${kmake} menuconfig  # select your options
+```
 
+Remember to configure the support for F2FS into the kernel.
+It needs to to be built in, not as a module to allow booting a root partition F2FS formatted.
+
+```
+<*> F2FS filesystem support
+[*]   F2FS Status Information
+[*]   F2FS extended attributes
+[*]     F2FS Access Control Lists
+[*]     F2FS Security Labels
+[ ]   F2FS consistency checking feature
+[ ]   F2FS IO tracer
+[ ]   F2FS fault injection facility
+[*]   F2FS compression feature
+[*]     LZO compression support
+[*]     LZ4 compression support
+[*]     ZSTD compression support
+[*]     LZO-RLE compression suppor
+```
+
+### Building and installing
+
+```sh
 # Build
 ${kmake} -j$(nproc)
 ${kmake} -j$(nproc) modules
