@@ -5,6 +5,8 @@ This guide describes how to install Gentoo Linux on a NanoPi R4S board.
 I will put the emphasis on creating a simple system, using the OpenRC init system and no initrd in its boot process.
 Later on, I will add a few sections on how to optimize the system to minimize writes, explain better how the boot process executes and how to configure this nice device into a useful router.
 
+The NanoPi R4S is offered in both 1GB and 4GB of RAM models. Although the 1GB model could technically be used, I strongly urge the user to go though this guide with the 4GB model. Gentoo Linux needs plenty of both RAM and disk space for package compilation, and the 4 GB model offers enough RAM space to compile most, if not all, packages without ever hitting on the SD card. Sparing the storage device will be a common concern of ours throughout the guide.
+
 ## Prerequisites
 
 We assume in this guide that the system will be built from a x86-64 Gentoo Linux system host, and that the user is comfortable enough with this Linux distribution.
@@ -129,6 +131,8 @@ U-Boot does not support the F2FS filesystem, which I would like to use for the r
 |        128 MiB  |      10368 MiB  |         10 GiB  | rootfs                  | f2fs       |
 |      10368 MiB  |             -1  |      remainder  | home                    | ext4       |
 
+The attentive reader may have noticed the absence of any swap partition. This is not a good idea on SD cards. This will be mitigated using both Zswap and zram kernel features.
+
 ### Partitioning
 
 We will first be zeroing the first 16 MiB to start from a blank state. Zeroing the full SD Card would be ideal if the card is not new. If you encounter errors while formatting the partitions, try again after zeroing the full card.
@@ -239,7 +243,7 @@ The kernel can either be cross-compiled or compiled from inside the emulated chr
 FriendlyArm provides a [fork](https://github.com/friendlyarm/kernel-rockchip/tree/nanopi-r2-v5.10.y) of the Linux kernel which has been rebased on top of v5.10.2 vanilla at the time of writing.
 The 5.10 release being LTS, it makes sense to cherry pick all the commits specific to the FriendlyArm fork and apply them on top of whatever patch release of the mainline kernel is currently available for this LTS version.
 
-### Extracting the Nanopi specific patches
+### Extracting the NanoPi specific patches
 
 ```sh
 cd "${R4S_DOWNLOAD}"
@@ -314,6 +318,21 @@ I am fond of the Zstd compressor, it is fast and efficient.
   [*]   Enable the compressed cache for swap pages by default
 ```
 
+#### zram
+
+zram provides a RAM block device which is also transparently compressed. It can efficiently replace tmpfs block devices on memory constrained systems.
+A zram backed block device will be configured in a later chapter for use as the temporary build directory used by portage.
+
+```
+-> Device Drivers
+  -> Block devices
+    < >   Null test block driver
+    <M>   Block Device Driver for Micron PCIe SSDs
+    <*>   Compressed RAM block device support
+    [*]     Write back incompressible or idle page to backing device
+    [*]     Track zRam block status
+```
+
 #### F2FS
 
 Remember to configure the support for F2FS into the kernel.
@@ -333,6 +352,24 @@ It needs to to be built in, not as a module to allow booting a root partition F2
   [*]     LZ4 compression support
   [*]     ZSTD compression support
 ```
+
+#### OverlayFS and SquashFS
+
+Both will be used to implement a SquashFS compressed portage tree that will be updated in memory using a write overlay stored in a ram disk.
+This has the distinct advantage of never hitting the SD card apart from a single SquashFS file update per portage sync.
+Portage queries will also be faster.
+
+```
+-> File systems
+  <*> Overlay filesystem support
+  [*] Miscellaneous filesystems  --->
+  <*>   SquashFS 4.0 - Squashed file system support
+          File decompression options (Decompress files directly into the page cache)  --->
+          Decompressor parallelisation options (Single threaded compression)  --->
+  [*]     Squashfs XATTR support
+  [*]     Include support for LZ4 compressed file systems
+  [*]     Include support for XZ compressed file systems
+  [*]     Include support for ZSTD compressed file systems
 ```
 
 ### Building and installing
@@ -480,7 +517,7 @@ Set it in /etc/conf.d/hostname
 #### Filesystem utilities
 
 ```sh
-emerge -a f2fs-tools
+emerge -a f2fs-tools squashfs-tools
 ```
 
 #### U-Boot tools
@@ -498,6 +535,18 @@ To know what broke on the first boot.
 emerge -a cronie syslog-ng logrotate
 rc-update add syslog-ng default
 rc-update add cronie default
+```
+
+### System time
+
+The NanoPi does have RTC support, and features a 2 pin connector to connect a battery to it.
+
+As a complement and or alternative, it is a good idea to run an NTP server that will ensure proper software clock synchronization.
+
+```sh
+emerge -a ntpd
+/etc/init.d/ntpd start
+rc-update add ntpd default
 ```
 
 ### Configuring the network
@@ -624,6 +673,8 @@ ln -sf Image_5.10.12 Image
 
 Everything should now be ready. All the partitions can be unmounted, the SD card inserted into the device card slot and a serial cable plugged into the debug UART headers if you have one. Remember to cross the Rx and Tx cables on the UART adapter.
 
+I widened the small hole connected to the fixation screw hole inside the aluminium use to 5 mm and managed to wires connected to the debug UART headers. This lets me connect a serial console to it while keeping the case closed.
+
 Connect to the console using screen (as root or add yourself to the uucp group):
 
 ```sh
@@ -635,6 +686,220 @@ And power the device on.
 ## After the first boot
 
 Open the [Gentoo Linux AMD64](https://wiki.gentoo.org/wiki/Handbook:AMD64) handbook and follow the steps that may have been skipped up to now.
+Almost everything should already have been taken care of.
+
+### Portage configuration
+
+You may have noticed that no portage tree has bee installed yet. In the previous steps we used the tree of the host.
+
+We will now tweak portage to reduce the load that installing packages from source may impose on the system.
+
+The next few paragraphs introduce a few complementary approaches that will culminate into a somewhat Portage optimized setup that avoids using the SD card for most operations. The basic observation it that 4 GB of RAM and simple use of data compression let us store the portage tree as well as the build directories in RAM.
+
+#### Partial Gentoo repository
+
+The first step is to avoid fetching the full portage tree, as only parts of it are useful for our system.
+Rsync let us do just that using the `--exclude-from` directive. Put the following line in `/etc/portage/make.conf`:
+
+```sh
+PORTAGE_RSYNC_EXTRA_OPTS="--delete-excluded --exclude-from=/etc/portage/rsync_excludes"
+```
+
+And fill the rsync_excludes file with patterns of files to exclude.
+Mine is somewhat conservative right now, with some effort it may be easy to reduce the tree a lot more.
+
+```
+games-*/*
+metadata/md5-cache/games-*/*
+app-emacs/*
+metadata/md5-cache/app-emacs/*
+app-mobilephone/*
+metadata/md5-cache/app-mobilephone/*
+app-pda/*
+metadata/md5-cache/app-pda/*
+app-xemacs/*
+metadata/md5-cache/app-xemacs/*
+dev-ada/*
+metadata/md5-cache/dev-ada/*
+dev-dotnet/*
+metadata/md5-cache/dev-dotnet/*
+dev-erlang/*
+metadata/md5-cache/dev-erlang/*
+dev-games/*
+metadata/md5-cache/dev-games/*
+dev-haskell/*
+metadata/md5-cache/dev-haskell/*
+dev-java/*
+metadata/md5-cache/dev-java/*
+dev-ml/*
+metadata/md5-cache/dev-ml/*
+dev-ruby/*
+metadata/md5-cache/dev-ruby/*
+dev-tex/*
+metadata/md5-cache/dev-tex/*
+dev-texlive/*
+metadata/md5-cache/dev-texlive/*
+gnustep-*/*
+metadata/md5-cache/gnustep-*/*
+gui-*/*
+metadata/md5-cache/gui-*/*
+java-virtuals/*
+metadata/md5-cache/java-virtuals/*
+kde-*/*
+metadata/md5-cache/kde-*/*
+lxde-base/*
+metadata/md5-cache/lxde-base/*
+lxqt-base/*
+metadata/md5-cache/lxqt-base/*
+mate-base/*
+metadata/md5-cache/mate-base/*
+mate-extra/*
+metadata/md5-cache/mate-extra/*
+media-radio/*
+metadata/md5-cache/media-radio/*
+media-sound/*
+metadata/md5-cache/media-sound/*
+media-tv/*
+metadata/md5-cache/media-tv/*
+net-wireless/*
+metadata/md5-cache/net-wireless/*
+sci-*/*
+metadata/md5-cache/sci-*/*
+x11-*/*
+metadata/md5-cache/x11-*/*
+xfce-*/*
+metadata/md5-cache/xfce-*/*
+```
+
+Portage verifies the integrity of the tree after a sync. Unfortunately there is no simple way of mixing partial trees and verification right now.
+Let us make portage less strict by setting this in `/etc/portage/repos.conf/gentoo.conf`:
+
+```conf
+[DEFAULT]
+main-repo = gentoo
+sync-allow-hardlinks = no
+
+[gentoo]
+sync-rsync-verify-metamanifest = no
+```
+
+#### Compiling in (compressed) RAM
+
+Software compilation can consume impressive amounts of memory and disk space, desktop and scientific packages being on the heavier side. Headless devices are not however the prime target for such packages. Most of them can be built comfortably without ever hitting the SD card, provided a tmpfs partition was setup var /var/tmp/portage as we did earlier in this guide.
+
+GCC is the obvious outlier in the base system installation and the worst offender by far. With some precautions, it needs about 4 GB of disk space and about 2 GB of free memory to compile (a few translation units are enormous that a single process consumes that much memory). The obvious conclusion is that one cannot compile GCC in RAM.
+
+Fortunately both source code and compiled objects are heavily compressible, and the Linux kernel offers a tool to create transparently compressed tmpfs-like ram disks: zram.
+
+Here is the result of applying such technique with GCC, at the very end of the compilation:
+
+```
+pal@r4s ~ $ zramctl
+NAME       ALGORITHM DISKSIZE  DATA COMPR TOTAL STREAMS MOUNTPOINT
+/dev/zram0 zstd          7.9G  3.8G  1.1G  1.2G       6 /var/tmp/portage
+```
+
+I created a Zstd-compressed zram disk of size 8 GB. The disk space required to hold the GCC source code and compilation artifacts is about 4 GB and the effective compression ratio it over 3.5, meaning, Only 1.2 GB of RAM was ever consumed on that task and left well over 2 GB of free memory for the actual compilation processes.
+
+The setup is surprisingly simple once zram is enabled in the kernel, as we will rely on `zram-init` instead of backing our own scripts.
+
+**Step 1: Install zram-init**
+
+```sh
+echo "sys-block/zram-init ~arm64" >> /etc/portage/package.accept_keywords
+emerge -a zram-init
+```
+
+**Step 2: Configure zram-init**
+
+We setup in `/etc/conf.d/zram-init` a 8 GB compressed RAM disk that is limited to 3 GB of actual memory usage. The init script will take care of creating an EXT2 partition on it.
+
+```sh
+# load zram kernel module on start?
+load_on_start=yes
+
+# unload zram kernel module on stop?
+unload_on_stop=yes
+
+# Number of devices.
+num_devices=1
+
+# /var/tmp/portage - 8G
+type0=/var/tmp/portage
+flag0=ext2
+size0=8096  # max content size
+mlim0=3072  # actual memory size limit
+back0= # no backup device
+icmp0= # no incompressible page writing to backup device
+idle0= # no idle page writing to backup device
+wlim0= # no writeback_limit for idle page writing for backup device
+blck0= # the default blocksize is 4096
+irat0=4096 # bytes/inode ratio
+inod0= # inode number
+opts0="noatime,nodiratime"
+mode0=1775
+owgr0="portage:portage"
+notr0= # keep the default on linux-3.15 or newer
+maxs0=1
+algo0=zstd
+labl0=var_tmp_portage
+uuid0=
+args0=
+```
+
+**Step 3: Disable the current /var/tmp/portage configuration:**
+
+```sh
+umount /var/tmp/portage
+```
+
+Now remove the line responsible for creating a tmpfs in this directory from `/etc/fstab`. zram-init will take care of mounting the zram disk for you at boot time.
+
+**Step 4: Enable zram-init**
+
+```sh
+rc-update add zram-init boot
+/etc/init.d/zram-init start
+```
+
+`/dev/zram0` should now be mounted on `/var/tmp/portage` as an EXT2 partition. The `zramctl` can tell you more about the state of zram block devices.
+
+#### Portage tree in a SquashFS file
+
+The portage tree is growing rather large. It consists at the time of writing in more than 120 000 files and about 650 MB of uncompressed data on disk.
+A partial SquashFS portage tree sits at 40 MB in a single file while delivering faster queries.
+
+There is a somewhat official project that delivers squashfs delta files for this already: `dev-util/squashmerge`. However It has not seen a lot of development as of late and it relies on continued official support from the Gentoo Linux project.
+
+I will thus provide a bash script that performs the same task using a different approach. It updates the Portage tree in RAM using an overlay filesystem consisting in a read overlay over the current squashed portage tree and a write overlay to store changes in a RAM backed disk. That way we rely on well supported in-kernel features and combine partial and squashed portage trees. The idea is not mine and I definitively got some inspiration from some other script. There are numerous articles and scripts describing this technique already.
+
+The [portage-squash-sync.sh](conf/etc/portage/portage-squash-sync.sh) does just that. Put it somewhere, for instance in /etc/portage and make it executable. I use an alias in my `/root/.bashrc` for easy invocation.
+
+```sh
+# In /root/.bashrc
+alias esync='/etc/portage/portage-squash-sync.sh'
+```
+
+Without arguments, it calls `emaint -a sync`. When passed `-w`, it calls `emerge-webrsync` instead, which may be preferable at initial setupe
+
+The squashed tree is stored in a RAM disk and mounted from here, to we need a way to copy the squashfs file to this location at boot and them mount it. This can be done with an entry in /etc/fstab and a service script called by init on boot.
+
+First, add the following in `/etc/fstab`:
+
+```fstab
+/var/tmp/portage/portage.sqfs  /var/db/repos/gentoo  squashfs  ro,loop,defaults,nosuid,nodev,noexec,noauto 0 0
+```
+
+And at last, copy the following script to `/etc/local.d/10-mount-portage-squashfs.start` and make it executable. Make sure the local service is enabled in the default runlevel.
+
+```sh
+#!/bin/sh
+cp /var/lib/portage/portage.sqfs /var/tmp/portage && mount /var/db/repos/gentoo
+```
+
+We setup /var/tmp/portage previously to be a zram disk created and mounted in the boot init level. This one will be called later, when the RAM disk will already be available.
+
+Everything should be in place, now open a new terminal or source your `~/.bashrc` and call `esync -w`.
 
 ## References
 
@@ -644,6 +909,8 @@ Open the [Gentoo Linux AMD64](https://wiki.gentoo.org/wiki/Handbook:AMD64) handb
 - [Gentoo AMD64 Handbook](https://wiki.gentoo.org/wiki/Handbook:AMD64)
 - [Gentoo Embedded Handbook](https://wiki.gentoo.org/wiki/Embedded_Handbook)
 - [Gentoo Cross build environment wiki page](https://wiki.gentoo.org/wiki/Cross_build_environment)
+- [Gentoo partial portage tree](https://wiki.gentoo.org/wiki/Handbook:X86/Portage/CustomTree)
+- [Squashed portage tree guide](https://www.brunsware.de/blog/portage-tree-squashfs-overlayfs)
 - [FriendlyArm U-Boot fork](https://github.com/friendlyarm/uboot-rockchip/tree/nanopi4-v2020.10)
 - [FriendlyArm Linux kernel fork](https://github.com/friendlyarm/kernel-rockchip/tree/nanopi-r2-v5.10.y)
 - [Archlinux F2FS Wiki page](https://wiki.archlinux.org/index.php/F2FShttps://wiki.archlinux.org/index.php/F2FS)

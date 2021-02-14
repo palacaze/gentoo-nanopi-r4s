@@ -1,0 +1,31 @@
+# load zram kernel module on start?
+load_on_start=yes
+
+# unload zram kernel module on stop?
+unload_on_stop=yes
+
+# Number of devices.
+num_devices=1
+
+# /var/tmp/portage - 8G
+type0=/var/tmp/portage
+flag0=ext2
+size0=8096  # max content size
+mlim0=3072  # actual memory size limit
+back0= # no backup device
+icmp0= # no incompressible page writing to backup device
+idle0= # no idle page writing to backup device
+wlim0= # no writeback_limit for idle page writing for backup device
+blck0= # the default blocksize is 4096
+irat0=4096 # bytes/inode ratio
+inod0= # inode number
+opts0="noatime,nodiratime"
+mode0=1775
+owgr0="portage:portage"
+notr0= # keep the default on linux-3.15 or newer
+maxs0=1
+algo0=zstd
+labl0=var_tmp_portage
+uuid0=
+args0=
+

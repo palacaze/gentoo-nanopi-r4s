@@ -1,0 +1,13 @@
+dev-embedded/u-boot-tools ~arm64
+sys-block/zram-init ~arm64
+
+# Neovim
+app-editors/neovim ~arm64
+dev-lua/luv ~arm64
+dev-lua/mpack ~arm64
+dev-lua/LuaBitOp ~arm64
+dev-libs/libvterm ~arm64
+dev-libs/msgpack ~arm64
+dev-libs/libtermkey ~arm64
+dev-libs/unibilium ~arm64
+dev-libs/libmpack ~arm64
