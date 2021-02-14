@@ -279,23 +279,60 @@ ${kmake} nanopi4_linux_defconfig
 ${kmake} menuconfig  # select your options
 ```
 
+The following paragraphs suggest a few options to enable as the guide will require them.
+However, those are not strictly required to have the R4S in working order.
+
+#### Frequency scaling
+
+I would recommend setting the default governor to `ondemand` or `schedutil`.
+
+```
+-> CPU Power Management
+  -> CPU Frequency scaling
+    [*] CPU Frequency scaling
+    [*]   CPU frequency transition statistics
+          Default CPUFreq governor (ondemand)
+    -*-   'performance' governor
+    <*>   'powersave' governor
+    <*>   'userspace' governor for userspace frequency scaling
+    -*-   'ondemand' cpufreq policy governor
+    <*>   'conservative' cpufreq governor
+```
+
+#### Zswap
+
+Zswap is a compressed cache for swap pages that is allocated in RAM.
+It will be used as a mitigation measure for the absence of a swap partition.
+It works by compressing data in RAM when there is little free memory left (configurable at boot time).
+I am fond of the Zstd compressor, it is fast and efficient.
+
+```
+-> Memory Management options
+  [*] Compressed cache for swap pages (EXPERIMENTAL)
+        Compressed cache for swap pages default compressor (zstd)  --->
+        Compressed cache for swap pages default allocator (zsmalloc)  --->
+  [*]   Enable the compressed cache for swap pages by default
+```
+
+#### F2FS
+
 Remember to configure the support for F2FS into the kernel.
 It needs to to be built in, not as a module to allow booting a root partition F2FS formatted.
 
 ```
-<*> F2FS filesystem support
-[*]   F2FS Status Information
-[*]   F2FS extended attributes
-[*]     F2FS Access Control Lists
-[*]     F2FS Security Labels
-[ ]   F2FS consistency checking feature
-[ ]   F2FS IO tracer
-[ ]   F2FS fault injection facility
-[*]   F2FS compression feature
-[*]     LZO compression support
-[*]     LZ4 compression support
-[*]     ZSTD compression support
-[*]     LZO-RLE compression suppor
+-> File systems
+  <*> F2FS filesystem support
+  [*]   F2FS Status Information
+  [*]   F2FS extended attributes
+  [*]     F2FS Access Control Lists
+  [*]     F2FS Security Labels
+  [ ]   F2FS consistency checking feature
+  [ ]   F2FS IO tracer
+  [ ]   F2FS fault injection facility
+  [*]   F2FS compression feature
+  [*]     LZ4 compression support
+  [*]     ZSTD compression support
+```
 ```
 
 ### Building and installing
@@ -393,14 +430,25 @@ export PS1="(r4s) $PS1"
 Let's adapt the `make.conf`
 
 ```sh
-CFLAGS="-O2 -pipe -march=armv8-a+crc -mtune=cortex-a72.cortex-a53" # -mfpu=neon-fp-armv8 -mfloat-abi=hard
-CXXFLAGS="${CFLAGS}"
+# No "native" march yet, we cannot expect QEMU to guess it for us.
+COMMON_FLAGS="-O2 -pipe -march=armv8-a+crypto+crc -mtune=cortex-a72.cortex-a53"
+# COMMON_FLAGS="-O2 -pipe -march=native -mtune=native"  # use this on the real hardware
+CFLAGS="${COMMON_FLAGS}"
+CXXFLAGS="${COMMON_FLAGS}"
+FCFLAGS="${COMMON_FLAGS}"
+FFLAGS="${COMMON_FLAGS}"
 
+CHOST="aarch64-unknown-linux-gnu"
+ACCEPT_KEYWORDS="arm64"
+
+EMERGE_DEFAULT_OPTS="--with-bdeps=y --quiet"
 MAKEOPTS="-j6"
-FEATURES="noman noinfo nodoc"
+
+FEATURES="noinfo nodoc"
+# We must disable a couple of sandbox features in the QEMU chroot
+FEATURES="$FEATURES -pid-sandbox -network-sandbox"  # remove this line once on the real hardware
 
 PORTAGE_RSYNC_EXTRA_OPTS="--delete-excluded --exclude-from=/etc/portage/rsync_excludes"
-
 PORTAGE_COMPRESS="bzip2"
 PORTAGE_COMPRESS_FLAGS="-9"
 
@@ -409,10 +457,18 @@ INSTALL_MASK="/usr/share/locale"
 GENTOO_MIRRORS="ftp://mirror.netcologne.de/gentoo/ https://ftp-stud.hs-esslingen.de/pub/Mirrors/gentoo/ ftp://mirror.bytemark.co.uk/gentoo/"
 
 ACCEPT_LICENSE="*"
-ACCEPT_KEYWORDS="arm64"
 
-USE="arm bash-completion idn ipv6 zlib -doc -test -X -bindist -gnome -gtk -gtk3 -kde -kde -minimal -nls -openmp \
-     -perl -python_targets_python3_9 -qt -qt4 -qt5 -spell -systemd -zeroconf zstd"
+# A few suggestions for a base system:
+# - I disabled anything GUI and systemd related
+# - I do not want to any additional locales
+# - I want zstd support for most tools
+# - I also disabled lto, it is a major RAM consumer
+# - I disabled pch for the same reasons. It may also be disabled on sys-devel/gcc only
+#
+USE="arm bash-completion idn ipv6 zlib -doc -test -X -bindist -gnome -gtk -gtk3 \
+     -kde -kde -lto -minimal -nls -pch -perl -qt -qt4 -qt5 -sanitize -spell -systemd -zeroconf zstd"
+
+LC_MESSAGES=C
 ```
 
 ### Hostname
@@ -421,7 +477,7 @@ Set it in /etc/conf.d/hostname
 
 ### Installing useful tools
 
-#### F2FS utilities
+#### Filesystem utilities
 
 ```sh
 emerge -a f2fs-tools
@@ -530,20 +586,23 @@ U-Boot contains a default boot script that gets executed after a configurable ti
 We will store our own boot script on the boot partition. Here is one I wrote for the R4S that matches the system configuration of this guide. Put this file in `"${R4S_GENTOO}/boot/boot.cmd"` and edit it as necessary. I like my console verbose.
 
 ```txt
+# U-Boot bootscript for the nanopi r4s on Gentoo Linux
+# Build with: mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
+
 setenv rootdev "/dev/mmcblk1p2"
 setenv fdtfile "rk3399-nanopi-r4s.dtb"
-setenv consoleargs "earlycon console=ttyS2,1500000"
+setenv ttyconsole "ttyS2,1500000"
+
+setenv consoleargs "earlycon console=${ttyconsole} consoleblank=0 earlyprintk=serial,${ttyconsole} debug loglevel=7"
+setenv zswapargs "zswap.enabled=1 zswap.compressor=zstd zswap.max_pool_percent=50"
+setenv rootargs "root=${rootdev} rootwait rootfstype=f2fs rootflags=compress_algorithm=zstd"
+setenv bootargs "${rootargs} ${consoleargs} ${zswapargs}"
 
 echo "Boot script loaded from ${devtype} ${devnum}"
-
-part uuid mmc 1:1 partuuid
-
-setenv bootargs "root=${rootdev} rootwait rootfstype=f2fs ${consoleargs} consoleblank=0 loglevel=7 ubootpart=${partuuid}"
 
 load mmc 1:1 ${kernel_addr_r} Image
 load mmc 1:1 ${fdt_addr_r} ${fdtfile}
 fdt addr ${fdt_addr_r}
-
 booti ${kernel_addr_r} - ${fdt_addr_r}
 ```
 
