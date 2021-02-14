@@ -901,6 +901,29 @@ We setup /var/tmp/portage previously to be a zram disk created and mounted in th
 
 Everything should be in place, now open a new terminal or source your `~/.bashrc` and call `esync -w`.
 
+### Essential tools
+
+To each its own, here are some of mine with accompanying configuration files in the `conf` directory of this repository.
+
+In `/etc/portage/package.accept_keywords`
+
+```
+# Neovim
+app-editors/neovim ~arm64
+dev-lua/luv ~arm64
+dev-lua/mpack ~arm64
+dev-lua/LuaBitOp ~arm64
+dev-libs/libvterm ~arm64
+dev-libs/msgpack ~arm64
+dev-libs/libtermkey ~arm64
+dev-libs/unibilium ~arm64
+dev-libs/libmpack ~arm64
+```
+
+```sh
+emerge -a neovim tmux git htop nmap lsof
+```
+
 ## References
 
 - [How to compile ATF](http://opensource.rock-chips.com/wiki_ATF)
