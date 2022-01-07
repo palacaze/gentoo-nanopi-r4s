@@ -387,7 +387,7 @@ R4S_KERNEL_VER=`${kmake} kernelrelease`
 # And copy the kernel as well as the device tree binary in the boot directory of the root FS
 cp .config "${R4S_GENTOO}/boot/config-${R4S_KERNEL_VER}"
 cp arch/arm64/boot/Image "${R4S_GENTOO}/boot/Image-${R4S_KERNEL_VER}"
-cp arch/arm64/boot/dts/rockchip/rk3399-nanopi-r4s.dtb "${R4S_GENTOO}/boot/rk3399-nanopi-r4s-${R4S_KERNEL_VER}.dtb"
+cp arch/arm64/boot/dts/rockchip/rk3399-nanopi-r4s.dtb "${R4S_GENTOO}/boot/"
 ```
 
 ## U-Boot
